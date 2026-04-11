@@ -331,10 +331,6 @@ def detect_cvd_divergence(symbol: str, minutes=30):
 
 
 def get_oi_history(symbol: str, period="5m", limit=288):
-    """
-    Отримує історію Open Interest за 24 години.
-    288 * 5m = 24 години.
-    """
     url = "https://fapi.binance.com/futures/data/openInterestHist"
     params = {"symbol": symbol, "period": period, "limit": limit}
 
@@ -346,9 +342,6 @@ def get_oi_history(symbol: str, period="5m", limit=288):
         return []
 
 def build_liquidation_heatmap(symbol: str, period="5m", limit=288):
-    """
-    Створює heatmap потенційних ліквідацій на основі OI Delta.
-    """
     candles = get_klines(symbol, interval=period, limit=limit)
     oi = get_oi_history(symbol, period=period, limit=limit)
 
@@ -360,8 +353,7 @@ def build_liquidation_heatmap(symbol: str, period="5m", limit=288):
     for i in range(1, len(oi)):
         delta = oi[i] - oi[i-1]
 
-        # Якщо OI виріс → відкрилися нові позиції → потенційні ліквідації
-        if delta > 0:
+        if delta > 0:  # відкрилися нові позиції → потенційні ліквідації
             heatmap.append({
                 "price": candles[i]["close"],
                 "oi_added": delta
@@ -370,10 +362,6 @@ def build_liquidation_heatmap(symbol: str, period="5m", limit=288):
     return heatmap
 
 def cluster_heatmap_zones(heatmap, cluster_percent=1.0):
-    """
-    Групує heatmap у кластери (зони ліквідацій).
-    cluster_percent = ширина кластера у %.
-    """
     clusters = {}
 
     for h in heatmap:
@@ -392,40 +380,123 @@ def cluster_heatmap_zones(heatmap, cluster_percent=1.0):
 
     return result
 
-def detect_liquidation_magnet(symbol: str, distance_percent=1.0):
+def get_top_liquidation_magnets(symbol: str, distance_percent=3.0, top_n=3):
     """
-    Визначає, чи ціна знаходиться близько до однієї з топ‑3 зон ліквідацій.
+    Повертає топ‑3 ліквідаційні магнітні зони:
+    - price: рівень зони
+    - oi: сила зони (скільки OI додано)
+    - distance: відстань до поточної ціни у %
+    - is_magnet: чи зона в межах distance_percent
     """
     heatmap = build_liquidation_heatmap(symbol)
     clusters = cluster_heatmap_zones(heatmap)
 
     if not clusters:
-        return False, None, None
+        return []
 
-    # беремо топ‑3 зон
-    top_clusters = clusters[:3]
+    # беремо топ‑N зон
+    clusters = clusters[:top_n]
 
+    # поточна ціна
     candles = get_klines(symbol, interval="1m", limit=1)
     price = candles[-1]["close"]
 
-    # шукаємо найближчу зону
-    best_zone = None
-    best_distance = 999
+    result = []
 
-    for cl in top_clusters:
+    for cl in clusters:
         cluster_price = cl["price"]
+        oi = cl["oi"]
+
         distance = abs(price - cluster_price) / cluster_price * 100
+        is_magnet = distance <= distance_percent
 
-        if distance < best_distance:
-            best_distance = distance
-            best_zone = cluster_price
+        result.append({
+            "price": cluster_price,
+            "oi": round(oi, 2),
+            "distance": round(distance, 2),
+            "is_magnet": is_magnet
+        })
 
-    if best_distance <= distance_percent:
-        return True, best_zone, round(best_distance, 2)
+    return result
 
-    return False, best_zone, round(best_distance, 2)
+def calculate_score(symbol: str):
+    score = 0
+    details = {}
 
-if __name__ == "__main__":
-    det, lvl, dist = detect_liquidation_magnet("BTCUSDT", distance_percent=1.0)
-    print("Magnet Zone:", det, "Level:", lvl, "Distance:", dist, "%")
+    # 1) Pump
+    pump_detected, pump_change = detect_pump(symbol)
+    details["pump"] = {"detected": pump_detected, "change_percent": pump_change}
+    if pump_detected:
+        score += 2
 
+    # 2) Volume Spike
+    vol_spike, vol_ratio = detect_volume_spike(symbol)
+    details["volume_spike"] = {"detected": vol_spike, "ratio": vol_ratio}
+    if vol_spike:
+        score += 1
+
+    # 3) Funding
+    funding_extreme, funding_value = detect_funding_extreme(symbol)
+    details["funding"] = {"extreme": funding_extreme, "value": funding_value}
+    if funding_extreme:
+        score += 1
+
+    # 4) Open Interest
+    oi_up, oi_change = detect_oi_increase(symbol, percent=3)
+    details["open_interest"] = {"increased": oi_up, "change_percent": oi_change}
+    if oi_up:
+        score += 1
+
+    # 5) VWAP
+    vwap_dev, vwap_pct = detect_vwap_deviation(symbol, minutes=30, threshold=1.5)
+    details["vwap"] = {"deviation": vwap_dev, "percent": vwap_pct}
+    if vwap_dev:
+        score += 1
+
+    # 6) CVD Divergence
+    cvd_div, price_chg, cvd_chg = detect_cvd_divergence(symbol, minutes=30)
+    details["cvd_divergence"] = {
+        "divergence": cvd_div,
+        "price_change": price_chg,
+        "cvd_change": cvd_chg
+    }
+    if cvd_div:
+        score += 2
+
+    # 7) Liquidation Heatmap (топ‑3)
+    magnets = get_top_liquidation_magnets(symbol, distance_percent=3.0, top_n=3)
+    details["liquidation_magnets"] = magnets
+
+    any_magnet_near = any(z["is_magnet"] for z in magnets) if magnets else False
+    if any_magnet_near:
+        score += 2
+
+    # 8) RSI
+    rsi_overbought, rsi_value = detect_rsi_overbought(symbol)
+    details["rsi"] = {"overbought": rsi_overbought, "value": rsi_value}
+    if rsi_overbought:
+        score += 1
+
+    # Рекомендація
+    recommendation = evaluate_recommendation(score)
+
+    return {
+        "symbol": symbol,
+        "score": score,
+        "recommendation": recommendation,
+        "details": details
+    }
+def evaluate_recommendation(score: int) -> str:
+    if score >= 6:
+        return "SHORT"
+    elif 3 <= score < 6:
+        return "WATCH"
+    else:
+        return "NO_TRADE"
+
+def scan_symbols(symbols: list):
+    results = []
+    for s in symbols:
+        res = calculate_score(s)
+        results.append(res)
+    return results
