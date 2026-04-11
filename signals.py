@@ -330,94 +330,102 @@ def detect_cvd_divergence(symbol: str, minutes=30):
     return False, round(price_change, 2), round(cvd_change, 2)
 
 
-def get_liquidations(symbol: str, limit=100):
+def get_oi_history(symbol: str, period="5m", limit=288):
     """
-    Отримує останні ліквідації з Binance Futures.
-    Повертає список ліквідацій з ціною та об'ємом.
+    Отримує історію Open Interest за 24 години.
+    288 * 5m = 24 години.
     """
-    url = "https://fapi.binance.com/futures/data/liquidationOrders"
-    params = {
-        "symbol": symbol,
-        "limit": limit
-    }
+    url = "https://fapi.binance.com/futures/data/openInterestHist"
+    params = {"symbol": symbol, "period": period, "limit": limit}
 
     try:
         response = requests.get(url, params=params, timeout=5)
         data = response.json()
-
-        liquidations = []
-        for item in data:
-            liquidations.append({
-                "price": float(item["price"]),
-                "qty": float(item["origQty"]),
-                "side": item["side"]  # BUY = ліквідація шортів, SELL = ліквідація лонгів
-            })
-
-        return liquidations
-
-    except Exception as e:
-        print(f"Error getting liquidations for {symbol}: {e}")
-        return None
-
-def cluster_liquidations(liquidations, cluster_percent=0.2):
-    """
-    Групує ліквідації в кластери за ціною.
-    cluster_percent = ширина кластера у %
-    Повертає список кластерів: (center_price, total_volume)
-    """
-    if not liquidations:
+        return [float(i["sumOpenInterest"]) for i in data]
+    except:
         return []
 
+def build_liquidation_heatmap(symbol: str, period="5m", limit=288):
+    """
+    Створює heatmap потенційних ліквідацій на основі OI Delta.
+    """
+    candles = get_klines(symbol, interval=period, limit=limit)
+    oi = get_oi_history(symbol, period=period, limit=limit)
+
+    if not candles or not oi or len(candles) != len(oi):
+        return []
+
+    heatmap = []
+
+    for i in range(1, len(oi)):
+        delta = oi[i] - oi[i-1]
+
+        # Якщо OI виріс → відкрилися нові позиції → потенційні ліквідації
+        if delta > 0:
+            heatmap.append({
+                "price": candles[i]["close"],
+                "oi_added": delta
+            })
+
+    return heatmap
+
+def cluster_heatmap_zones(heatmap, cluster_percent=1.0):
+    """
+    Групує heatmap у кластери (зони ліквідацій).
+    cluster_percent = ширина кластера у %.
+    """
     clusters = {}
 
-    for liq in liquidations:
-        price = liq["price"]
-        qty = liq["qty"]
+    for h in heatmap:
+        price = h["price"]
+        oi_added = h["oi_added"]
 
-        # округляємо ціну до кластера
         cluster_key = round(price / (1 + cluster_percent / 100), 2)
 
         if cluster_key not in clusters:
             clusters[cluster_key] = 0
 
-        clusters[cluster_key] += qty
+        clusters[cluster_key] += oi_added
 
-    # перетворюємо в список
-    result = [{"price": k, "volume": v} for k, v in clusters.items()]
-
-    # сортуємо за об'ємом
-    result.sort(key=lambda x: x["volume"], reverse=True)
+    result = [{"price": k, "oi": v} for k, v in clusters.items()]
+    result.sort(key=lambda x: x["oi"], reverse=True)
 
     return result
-def detect_liquidation_cluster(symbol: str, distance_percent=1.0):
-    """
-    Визначає, чи ціна знаходиться близько до великого кластера ліквідацій.
-    distance_percent = максимальна дистанція до кластера у %
-    Повертає (detected: bool, cluster_price: float, distance: float)
-    """
-    liquidations = get_liquidations(symbol)
-    if not liquidations:
-        return False, 0, 0
 
-    clusters = cluster_liquidations(liquidations)
+def detect_liquidation_magnet(symbol: str, distance_percent=1.0):
+    """
+    Визначає, чи ціна знаходиться близько до однієї з топ‑3 зон ліквідацій.
+    """
+    heatmap = build_liquidation_heatmap(symbol)
+    clusters = cluster_heatmap_zones(heatmap)
+
     if not clusters:
-        return False, 0, 0
+        return False, None, None
 
-    # найбільший кластер
-    top_cluster = clusters[0]
-    cluster_price = top_cluster["price"]
+    # беремо топ‑3 зон
+    top_clusters = clusters[:3]
 
-    # поточна ціна
     candles = get_klines(symbol, interval="1m", limit=1)
-    if not candles:
-        return False, 0, 0
-
     price = candles[-1]["close"]
 
-    # відстань у %
-    distance = abs(price - cluster_price) / cluster_price * 100
+    # шукаємо найближчу зону
+    best_zone = None
+    best_distance = 999
 
-    if distance <= distance_percent:
-        return True, cluster_price, round(distance, 2)
+    for cl in top_clusters:
+        cluster_price = cl["price"]
+        distance = abs(price - cluster_price) / cluster_price * 100
 
-    return False, cluster_price, round(distance, 2)
+        if distance < best_distance:
+            best_distance = distance
+            best_zone = cluster_price
+
+    if best_distance <= distance_percent:
+        return True, best_zone, round(best_distance, 2)
+
+    return False, best_zone, round(best_distance, 2)
+
+if __name__ == "__main__":
+    det, lvl, dist = detect_liquidation_magnet("BTCUSDT", distance_percent=1.0)
+    print("Magnet Zone:", det, "Level:", lvl, "Distance:", dist, "%")
+
