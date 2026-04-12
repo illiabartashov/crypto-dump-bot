@@ -110,6 +110,44 @@ def calculate_rsi(candles, period=14):
 
     return round(rsi, 2)
 
+def detect_rsi_overbought(symbol: str, period=14, threshold=70):
+    """
+    Визначає, чи RSI знаходиться в зоні перекупленості.
+    threshold = 70 → класичний рівень
+    Повертає (overbought: bool, rsi_value: float)
+    """
+    candles = get_klines(symbol, interval="1m", limit=period + 1)
+    if not candles or len(candles) < period:
+        return False, 0
+
+    closes = [c["close"] for c in candles]
+
+    # Розрахунок RSI
+    gains = []
+    losses = []
+
+    for i in range(1, len(closes)):
+        diff = closes[i] - closes[i - 1]
+        if diff > 0:
+            gains.append(diff)
+            losses.append(0)
+        else:
+            gains.append(0)
+            losses.append(abs(diff))
+
+    avg_gain = sum(gains[-period:]) / period
+    avg_loss = sum(losses[-period:]) / period
+
+    if avg_loss == 0:
+        rsi = 100
+    else:
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+
+    rsi = round(rsi, 2)
+
+    return (rsi >= threshold), rsi
+
 
 def detect_pump(symbol: str, percent=5, minutes=5):
     """
@@ -192,6 +230,30 @@ def detect_high_funding(symbol: str, threshold=0.03):
         return True, round(fr, 4)
     else:
         return False, round(fr, 4)
+def detect_funding_extreme(symbol: str, threshold=0.01):
+    """
+    Визначає, чи funding rate перегрітий.
+    threshold = 0.01 → 1%
+    Повертає (extreme: bool, funding_value: float)
+    """
+    url = "https://fapi.binance.com/fapi/v1/premiumIndex"
+    params = {"symbol": symbol}
+
+    try:
+        response = requests.get(url, params=params, timeout=5)
+        data = response.json()
+
+        funding = float(data["lastFundingRate"])
+
+        # якщо funding > 1% → перегрів лонгів
+        if funding >= threshold:
+            return True, round(funding * 100, 4)
+
+        return False, round(funding * 100, 4)
+
+    except Exception as e:
+        print(f"Funding error for {symbol}: {e}")
+        return False, 0
 
 
 def get_open_interest(symbol: str, period="5m", limit=30):
@@ -419,9 +481,69 @@ def get_top_liquidation_magnets(symbol: str, distance_percent=3.0, top_n=3):
 
     return result
 
+def calculate_ema(values, period):
+    """
+    Розрахунок EMA вручну (без бібліотек).
+    """
+    if len(values) < period:
+        return None
+
+    k = 2 / (period + 1)
+    ema = values[0]
+
+    for price in values[1:]:
+        ema = price * k + ema * (1 - k)
+
+    return ema
+
+
+def detect_trend_strength(symbol: str):
+    """
+    Визначає тренд на основі EMA 20/50/200.
+    Повертає:
+    - trend: 'up', 'down', 'flat'
+    - ema20, ema50, ema200
+    """
+    candles = get_klines(symbol, interval="1m", limit=250)
+    if not candles or len(candles) < 200:
+        return "flat", 0, 0, 0
+
+    closes = [c["close"] for c in candles]
+
+    ema20 = calculate_ema(closes, 20)
+    ema50 = calculate_ema(closes, 50)
+    ema200 = calculate_ema(closes, 200)
+
+    # Логіка тренду
+    if ema20 > ema50 > ema200:
+        trend = "up"
+    elif ema20 < ema50 < ema200:
+        trend = "down"
+    else:
+        trend = "flat"
+
+    return trend, round(ema20, 2), round(ema50, 2), round(ema200, 2)
+
+
+
 def calculate_score(symbol: str):
     score = 0
     details = {}
+
+    trend, ema20, ema50, ema200 = detect_trend_strength(symbol)
+    details["trend"] = {
+        "trend": trend,
+        "ema20": ema20,
+        "ema50": ema50,
+        "ema200": ema200
+    }
+
+    # Ваги тренду
+    if trend == "down":
+        score += 2
+    elif trend == "flat":
+        score += 1
+    # trend == "up" → 0 балів
 
     # 1) Pump
     pump_detected, pump_change = detect_pump(symbol)
@@ -500,3 +622,5 @@ def scan_symbols(symbols: list):
         res = calculate_score(s)
         results.append(res)
     return results
+result = calculate_score("BTCUSDT")
+print(result)
