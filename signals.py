@@ -1,5 +1,5 @@
 import requests
-
+import time
 
 # ============================
 # 1. Отримання списку ф'ючерсних монет
@@ -35,41 +35,38 @@ def get_price(symbol: str) -> float:
         return None
 
 
-def get_klines(symbol: str, interval="1m", limit=200):
-    """
-    Отримує історичні свічки Binance Futures USDT-M.
-    interval: 1m, 3m, 5m, 15m, 1h, 4h, 1d ...
-    limit: кількість свічок (максимум 1500)
-    """
+import aiohttp
+import asyncio
+
+async def get_klines(symbol: str, interval="1m", limit=200, retries=5):
     url = "https://fapi.binance.com/fapi/v1/klines"
-    params = {
-        "symbol": symbol,
-        "interval": interval,
-        "limit": limit
-    }
+    params = {"symbol": symbol, "interval": interval, "limit": limit}
 
-    try:
-        response = requests.get(url, params=params, timeout=5)
-        data = response.json()
+    for attempt in range(1, retries + 1):
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params, timeout=5) as resp:
+                    data = await resp.json()
 
-        # Перетворюємо сирі дані у зручний формат
-        candles = []
-        for c in data:
-            candles.append({
-                "open_time": c[0],
-                "open": float(c[1]),
-                "high": float(c[2]),
-                "low": float(c[3]),
-                "close": float(c[4]),
-                "volume": float(c[5]),
-                "close_time": c[6]
-            })
+                    candles = []
+                    for c in data:
+                        candles.append({
+                            "open_time": c[0],
+                            "open": float(c[1]),
+                            "high": float(c[2]),
+                            "low": float(c[3]),
+                            "close": float(c[4]),
+                            "volume": float(c[5]),
+                            "close_time": c[6]
+                        })
+                    return candles
 
-        return candles
+        except Exception as e:
+            print(f"Error getting klines for {symbol}: {e} (attempt {attempt}/{retries})")
+            await asyncio.sleep(0.3)
 
-    except Exception as e:
-        print(f"Error getting klines for {symbol}: {e}")
-        return None
+    return None
+
 
 
 def calculate_rsi(candles, period=14):
@@ -523,8 +520,7 @@ def detect_trend_strength(symbol: str):
     return trend, round(ema20, 2), round(ema50, 2), round(ema200, 2)
 
 
-
-def calculate_score(symbol: str):
+async def calculate_score(symbol: str):
     score = 0
     details = {}
 
@@ -541,7 +537,8 @@ def calculate_score(symbol: str):
         score += 2
     elif trend == "flat":
         score += 1
-    # trend == "up" → 0 балів
+    # якщо trend == "up" → score += 0
+
 
     # 1) Pump
     pump_detected, pump_change = detect_pump(symbol)
