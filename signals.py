@@ -498,12 +498,6 @@ def calculate_ema(values, period):
 
 
 def detect_trend_strength(symbol: str):
-    """
-    Визначає тренд на основі EMA 20/50/200.
-    Повертає:
-    - trend: 'up', 'down', 'flat'
-    - ema20, ema50, ema200
-    """
     candles = get_klines(symbol, interval="1m", limit=250)
     if not candles or len(candles) < 200:
         return "flat", 0, 0, 0
@@ -513,6 +507,10 @@ def detect_trend_strength(symbol: str):
     ema20 = calculate_ema(closes, 20)
     ema50 = calculate_ema(closes, 50)
     ema200 = calculate_ema(closes, 200)
+
+    # Якщо хоч одна EMA не порахувалась — тренд нейтральний
+    if ema20 is None or ema50 is None or ema200 is None:
+        return "flat", ema20 or 0, ema50 or 0, ema200 or 0
 
     # Логіка тренду
     if ema20 > ema50 > ema200:
