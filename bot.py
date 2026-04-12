@@ -2,15 +2,29 @@ import time
 import telebot
 from config import TELEGRAM_TOKEN
 
+ALLOWED_USERS = {5609621175}
+
+def is_allowed(user_id):
+    return user_id in ALLOWED_USERS
+
+
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.reply_to(message, "Бот працює! Сканую ринок 24/7 🔍")
+    if not is_allowed(message.from_user.id):
+        bot.send_message(message.chat.id, "⛔ Доступ заборонено")
+        return
+
+    bot.send_message(message.chat.id, "Бот активний")
 
 @bot.message_handler(commands=['status'])
 def status(message):
-    bot.reply_to(message, "Сканер активний. Сигнали надходитимуть автоматично 📡")
+    if not is_allowed(message.from_user.id):
+        bot.send_message(message.chat.id, "⛔ Доступ заборонено")
+        return
+
+    bot.send_message(message.chat.id, "Все працює")
 
 def run_bot():
     print("Telegram bot is running...")
