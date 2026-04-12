@@ -1,5 +1,6 @@
+import time
 import telebot
-from config import TELEGRAM_TOKEN, CHAT_ID
+from config import TELEGRAM_TOKEN
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
@@ -11,6 +12,16 @@ def start(message):
 def status(message):
     bot.reply_to(message, "Сканер активний. Сигнали надходитимуть автоматично 📡")
 
-if __name__ == "__main__":
+def run_bot():
     print("Telegram bot is running...")
-    bot.infinity_polling()
+
+    while True:
+        try:
+            bot.polling(none_stop=True, timeout=60, long_polling_timeout=60)
+        except Exception as e:
+            print(f"Polling error: {e}")
+            time.sleep(3)  # пауза перед повтором
+
+
+if __name__ == "__main__":
+    run_bot()
