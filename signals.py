@@ -1,5 +1,7 @@
 import requests
 import time
+from indicators import detect_oi_change_async
+
 
 # ============================
 # 1. Отримання списку ф'ючерсних монет
@@ -591,10 +593,10 @@ async def calculate_score(symbol: str):
     if funding_extreme:
         score += 1
 
-    # 4) Open Interest
-    oi_up, oi_change = detect_oi_increase(symbol, percent=3)
-    details["open_interest"] = {"increased": oi_up, "change_percent": oi_change}
-    if oi_up:
+    # 4) Open Interest (async версія)
+    oi_data = await detect_oi_change_async(symbol, percent=3)
+    details["open_interest"] = oi_data
+    if oi_data["increased"]:
         score += 1
 
     # 5) VWAP
