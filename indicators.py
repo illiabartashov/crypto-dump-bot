@@ -55,17 +55,15 @@ def detect_trend_strength(candles):
 def calculate_liquidation_magnets(candles, levels_count=5):
     """
     Проста модель "liquidation magnets":
-    - беремо останні свічки
-    - шукаємо локальні мінімуми (де low нижче сусідніх)
+    - шукаємо локальні мінімуми (low нижче сусідніх)
     - рахуємо відстань від поточної ціни
-    - повертаємо кілька найближчих рівнів нижче ціни
+    - прибираємо дублікати рівнів
+    - повертаємо N найближчих рівнів
     """
     if not candles or len(candles) < 10:
         return []
 
-    # Поточна ціна = close останньої свічки
     current_price = candles[-1]["close"]
-
     levels = []
 
     # Шукаємо локальні мінімуми
@@ -84,8 +82,17 @@ def calculate_liquidation_magnets(candles, levels_count=5):
     # Сортуємо за відстанню (найближчі до поточної ціни)
     levels.sort(key=lambda x: x["distance"])
 
+    # 🔥 Прибираємо дублікати рівнів
+    unique = []
+    seen = set()
+
+    for lvl in levels:
+        if lvl["price"] not in seen:
+            unique.append(lvl)
+            seen.add(lvl["price"])
+
     # Повертаємо тільки N найближчих рівнів
-    return levels[:levels_count]
+    return unique[:levels_count]
 
 
 def calculate_score(symbol, candles):
