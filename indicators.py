@@ -226,7 +226,7 @@ def calculate_score(symbol, candles, oi_data):
     if magnets and magnets[0]["distance"] <= 3:
         score += 1
 
-    recommendation = "SHORT" if score >= 4 else "NO_TRADE"
+    recommendation = "SHORT" if score >= 6 else "NO_TRADE"
 
     return {
         "symbol": symbol,
