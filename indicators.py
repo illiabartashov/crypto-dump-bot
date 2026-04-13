@@ -116,7 +116,7 @@ def calculate_score(symbol, candles):
     #   Рекомендація
     # -----------------------------
     recommendation = "NO_TRADE"
-    if score >= 2:
+    if score >= 6:
         recommendation = "SHORT"
 
     return {

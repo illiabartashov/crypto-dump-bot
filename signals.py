@@ -37,16 +37,36 @@ def get_price(symbol: str) -> float:
 
 import aiohttp
 import asyncio
+import ssl
+
 
 async def get_klines(symbol: str, interval="1m", limit=200, retries=5):
     url = "https://fapi.binance.com/fapi/v1/klines"
     params = {"symbol": symbol, "interval": interval, "limit": limit}
 
+    # 🔒 Вимикаємо SSL‑перевірку (macOS fix)
+    ssl_context = ssl.create_default_context()
+    ssl_context.check_hostname = False
+    ssl_context.verify_mode = ssl.CERT_NONE
+
     for attempt in range(1, retries + 1):
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, params=params, timeout=5) as resp:
-                    data = await resp.json()
+                async with session.get(url, params=params, timeout=5, ssl=ssl_context) as resp:
+
+                    # Binance інколи повертає HTML або пусту відповідь → ловимо
+                    try:
+                        data = await resp.json()
+                    except:
+                        print(f"Binance returned non‑JSON for {symbol} (attempt {attempt}/{retries})")
+                        await asyncio.sleep(0.3)
+                        continue
+
+                    # Якщо Binance повернув помилку
+                    if not isinstance(data, list):
+                        print(f"Invalid klines format for {symbol}: {data}")
+                        await asyncio.sleep(0.3)
+                        continue
 
                     candles = []
                     for c in data:
@@ -59,14 +79,15 @@ async def get_klines(symbol: str, interval="1m", limit=200, retries=5):
                             "volume": float(c[5]),
                             "close_time": c[6]
                         })
+
                     return candles
 
         except Exception as e:
             print(f"Error getting klines for {symbol}: {e} (attempt {attempt}/{retries})")
             await asyncio.sleep(0.3)
 
+    # Якщо після всіх спроб нічого не вийшло
     return None
-
 
 
 def calculate_rsi(candles, period=14):
