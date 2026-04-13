@@ -7,7 +7,7 @@ async def scan_symbol(symbol):
     try:
         result = await calculate_score_async(symbol)
         if result and result["recommendation"] == "SHORT":
-            send_telegram_signal(result)
+            await send_telegram_signal(result)
     except Exception as e:
         print(f"Error scanning {symbol}: {e}")
 
