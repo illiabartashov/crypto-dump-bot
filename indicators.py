@@ -96,27 +96,61 @@ def calculate_liquidation_magnets(candles, levels_count=5):
 
 
 def calculate_score(symbol, candles):
-    trend_data = detect_trend_strength(candles)
-
-    # -----------------------------
-    #   Базовий скорінг по тренду
-    # -----------------------------
     score = 0
 
+    # -----------------------------
+    #   1. Тренд
+    # -----------------------------
+    trend_data = detect_trend_strength(candles)
     if trend_data["trend"] == "down":
         score += 2
     elif trend_data["trend"] == "flat":
         score += 1
 
     # -----------------------------
-    #   Розрахунок liquidation magnets
+    #   2. EMA
+    # -----------------------------
+    ema_fast = calculate_ema(candles, period=20)
+    ema_slow = calculate_ema(candles, period=50)
+
+    if ema_fast and ema_slow and ema_fast < ema_slow:
+        score += 1  # bearish EMA cross
+
+    # -----------------------------
+    #   3. RSI
+    # -----------------------------
+    rsi = calculate_rsi(candles)
+    if rsi and rsi > 70:
+        score += 1  # overbought → good for short
+
+    # -----------------------------
+    #   4. CVD
+    # -----------------------------
+    cvd = calculate_cvd(candles)
+    if cvd and cvd["direction"] == "down":
+        score += 1
+
+    # -----------------------------
+    #   5. Open Interest
+    # -----------------------------
+    oi = calculate_open_interest(symbol)
+    if oi and oi["change"] > 0:
+        score += 1  # OI rising → more liquidity to hunt
+
+    # -----------------------------
+    #   6. VWAP
+    # -----------------------------
+    vwap = calculate_vwap(candles)
+    if vwap and candles[-1]["close"] < vwap:
+        score += 1  # price under VWAP → bearish
+
+    # -----------------------------
+    #   7. Liquidation Magnets
     # -----------------------------
     magnets = calculate_liquidation_magnets(candles)
-
-    # Якщо є сильні магніти близько до ціни → додаємо бал
     if magnets:
         nearest = magnets[0]
-        if nearest["distance"] <= 3:  # наприклад, рівень в межах 3%
+        if nearest["distance"] <= 3:
             score += 1
 
     # -----------------------------
@@ -132,6 +166,12 @@ def calculate_score(symbol, candles):
         "recommendation": recommendation,
         "details": {
             "trend": trend_data,
+            "ema_fast": ema_fast,
+            "ema_slow": ema_slow,
+            "rsi": rsi,
+            "cvd": cvd,
+            "open_interest": oi,
+            "vwap": vwap,
             "liquidation_magnets": magnets
         }
     }

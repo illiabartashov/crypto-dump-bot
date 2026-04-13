@@ -274,12 +274,14 @@ def detect_funding_extreme(symbol: str, threshold=0.01):
         return False, 0
 
 
-def get_open_interest(symbol: str, period="5m", limit=30):
+import aiohttp
+import asyncio
+
+
+async def get_open_interest_async(symbol: str, period="5m", limit=30):
     """
-    Отримує історію Open Interest для монети.
-    period: 5m, 15m, 1h, 4h, 1d
-    limit: кількість точок (максимум 500)
-    Повертає список значень OI.
+    Отримує історію Open Interest (async).
+    Повертає список значень OI або None.
     """
     url = "https://fapi.binance.com/futures/data/openInterestHist"
     params = {
@@ -289,35 +291,45 @@ def get_open_interest(symbol: str, period="5m", limit=30):
     }
 
     try:
-        response = requests.get(url, params=params, timeout=5)
-        data = response.json()
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params, timeout=5) as resp:
+                data = await resp.json()
 
-        oi_values = [float(item["sumOpenInterest"]) for item in data]
-        return oi_values
+                if not isinstance(data, list):
+                    return None
+
+                oi_values = [float(item["sumOpenInterest"]) for item in data]
+                return oi_values
 
     except Exception as e:
         print(f"Error getting OI for {symbol}: {e}")
         return None
 
-def detect_oi_increase(symbol: str, percent=3, period="5m", limit=30):
+
+
+async def detect_oi_change_async(symbol: str, percent=3, period="5m", limit=30):
     """
-    Визначає, чи Open Interest виріс на X% за останній період.
-    Повертає (oi_increased: bool, change_percent: float)
+    Визначає зміну Open Interest.
+    Повертає словник:
+    {
+        "increased": True/False,
+        "change": float
+    }
     """
-    oi = get_open_interest(symbol, period=period, limit=limit)
+    oi = await get_open_interest_async(symbol, period=period, limit=limit)
+
     if not oi or len(oi) < 2:
-        return False, 0
+        return {"increased": False, "change": 0}
 
     old = oi[0]
     new = oi[-1]
 
     change = ((new - old) / old) * 100
 
-    if change >= percent:
-        return True, round(change, 2)
-    else:
-        return False, round(change, 2)
-
+    return {
+        "increased": change >= percent,
+        "change": round(change, 2)
+    }
 
 def calculate_vwap(candles):
     """
