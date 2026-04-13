@@ -51,9 +51,49 @@ def detect_trend_strength(candles):
 # ------------------------------
 #   SCORE ENGINE
 # ------------------------------
+
+def calculate_liquidation_magnets(candles, levels_count=5):
+    """
+    Проста модель "liquidation magnets":
+    - беремо останні свічки
+    - шукаємо локальні мінімуми (де low нижче сусідніх)
+    - рахуємо відстань від поточної ціни
+    - повертаємо кілька найближчих рівнів нижче ціни
+    """
+    if not candles or len(candles) < 10:
+        return []
+
+    # Поточна ціна = close останньої свічки
+    current_price = candles[-1]["close"]
+
+    levels = []
+
+    # Шукаємо локальні мінімуми
+    for i in range(1, len(candles) - 1):
+        prev_low = candles[i - 1]["low"]
+        low = candles[i]["low"]
+        next_low = candles[i + 1]["low"]
+
+        if low < prev_low and low < next_low and low < current_price:
+            distance_pct = round((current_price - low) / current_price * 100, 2)
+            levels.append({
+                "price": round(low, 4),
+                "distance": distance_pct
+            })
+
+    # Сортуємо за відстанню (найближчі до поточної ціни)
+    levels.sort(key=lambda x: x["distance"])
+
+    # Повертаємо тільки N найближчих рівнів
+    return levels[:levels_count]
+
+
 def calculate_score(symbol, candles):
     trend_data = detect_trend_strength(candles)
 
+    # -----------------------------
+    #   Базовий скорінг по тренду
+    # -----------------------------
     score = 0
 
     if trend_data["trend"] == "down":
@@ -61,6 +101,20 @@ def calculate_score(symbol, candles):
     elif trend_data["trend"] == "flat":
         score += 1
 
+    # -----------------------------
+    #   Розрахунок liquidation magnets
+    # -----------------------------
+    magnets = calculate_liquidation_magnets(candles)
+
+    # Якщо є сильні магніти близько до ціни → додаємо бал
+    if magnets:
+        nearest = magnets[0]
+        if nearest["distance"] <= 3:  # наприклад, рівень в межах 3%
+            score += 1
+
+    # -----------------------------
+    #   Рекомендація
+    # -----------------------------
     recommendation = "NO_TRADE"
     if score >= 2:
         recommendation = "SHORT"
@@ -70,10 +124,10 @@ def calculate_score(symbol, candles):
         "score": score,
         "recommendation": recommendation,
         "details": {
-            "trend": trend_data
+            "trend": trend_data,
+            "liquidation_magnets": magnets
         }
     }
-
 
 # ------------------------------
 #   ASYNC WRAPPER
